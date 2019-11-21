@@ -42,44 +42,11 @@ Adafruit_HX8357 tft = Adafruit_HX8357(TFT_CS, TFT_DC, TFT_RST);
 TouchScreen ts = TouchScreen(XP, YP, XM, YM, 321.1);
 
 XBee xbee = XBee();
-XBeeResponse response = XBeeResponse();
-// create reusable response objects for responses we expect to handle
-Rx16Response rx16 = Rx16Response();
-//Rx64Response rx64 = Rx64Response();
-
-// allocate two bytes for to hold a 32-bit number
-//uint8_t payload[] = {0, 0, 0, 0};
-
-// with Series 1 you can use either 16-bit or 64-bit addressing
-//u_int16_t addr16 = 0x00E1;
-// 16-bit addressing: Enter address of remote XBee, typically the coordinator
-//Tx16Request tx = Tx16Request(addr16, payload, sizeof(payload));
-
 TxStatusResponse txStatus = TxStatusResponse();
-
-void printDigits(int digits)
-{
-  // utility function for digital clock display: prints preceding colon and leading 0
-  tft.print(":");
-  if (digits < 10)
-    tft.print('0');
-  tft.print(digits);
-}
-
-void digitalClockDisplay()
-{
-  // digital clock display of the time
-  tft.print(hour());
-  printDigits(minute());
-  printDigits(second());
-  tft.print(" ");
-  tft.print(day());
-  tft.print(" ");
-  tft.print(month());
-  tft.print(" ");
-  tft.print(year());
-  tft.println();
-}
+uint32_t oldmillis = millis();
+uint16_t buttonHeight = 96; //480 / 5;
+uint16_t buttonWidth = 160; //320 / 2;
+uint8_t clearScreen = 0;
 
 void printDigits(uint32_t digits)
 {
@@ -119,8 +86,9 @@ class nodes
   uint8_t dataPackage[4] = {0,0,0,0};
   uint8_t name;
   uint16_t color;
-
-  
+  uint32_t p[3] = {0,0,0};
+  uint32_t timeSetOnUnit = 0;
+    
   nodes();
 
   nodes(uint8_t nameOfTheUnit,uint16_t address16bit,uint16_t upperCornerX,uint16_t upperCornerY,uint16_t deltaXWidth,uint16_t deltaYHeight,uint16_t buttonColor){//constructor
@@ -152,7 +120,37 @@ class nodes
   }
 
   bool checkTimeOnUnit(){//will check if the time set on this unit is within accepted delta of the coordinator
-    return true;
+    bool timeSetCorrectly = false;
+    for (int i = 0; i<4; i++)//time,p[0],p[1],p[2]
+    {  
+      if (xbee.readPacket(1000))
+      {
+        Rx16Response resp;
+        if (xbee.getResponse().getApiId() == RX_16_RESPONSE)
+        {
+          xbee.getResponse().getRx16Response(resp);
+          uint8_t frameData[] = {resp.getData(0),resp.getData(1),resp.getData(2),resp.getData(3)};
+          uint32_t receivedTime = decodePayload(frameData);
+          if(receivedTime>10000000)//then this must be the unix time
+          {
+            uint32_t deltaT = Teensy3Clock.get() - receivedTime;
+            tft.print("deltaT between unit and coordinator = ");
+            tft.println(deltaT);
+            if (deltaT == 0)
+            {
+              timeSetCorrectly = true;
+            }
+            timeSetOnUnit = receivedTime;
+          }
+          else //must be pressure data
+          {
+            p[i-1] = receivedTime;
+          }
+        } 
+      }
+    }
+    flushAPI();
+    return timeSetCorrectly;
   }
 
   void flushAPI()
@@ -228,8 +226,9 @@ class nodes
               tft.println("Attemped to update the time but the response time was too long. will retry. get closer to the unit.");
               tft.print("number of attempts: ");
               tft.println(numTries);
-              delay(5000);
+              delay(10000);
               color = HX8357_RED;
+              flushAPI();
             }
           }
           else
@@ -239,6 +238,7 @@ class nodes
             tft.println();
             delay(5000);
             color = HX8357_RED;
+            flushAPI();
           }
         }
       } 
@@ -248,12 +248,14 @@ class nodes
         tft.println(xbee.getResponse().getErrorCode());
         delay(5000);
         color = HX8357_RED;
+        flushAPI();
       }
       else
       {
         tft.println("local XBee did not provide a timely TX Status Response.  Radio is not configured properly or connected");
         delay(5000);
         color = HX8357_RED;
+        flushAPI();
       }
     }
     if (updateTimeSuccess == false){
@@ -352,6 +354,32 @@ class nodes
       return 0;
     }
   }
+
+  void drawButton()
+  { 
+    int margin = 10;
+    int gap = 5;
+    int height3 = 20;
+    int height1 = 10;
+    tft.fillRoundRect(cornerX+margin, cornerY+margin,deltaX-margin,deltaY-margin,10,color);
+    tft.setCursor(cornerX+deltaX/2-gap,cornerY+ margin + gap);
+    tft.setTextColor(HX8357_BLACK);
+    tft.setTextSize(3);
+    tft.println(name);
+    tft.setCursor(cornerX+margin+gap,cornerY+2* margin+height3);
+    tft.setTextSize(1);
+    tft.print("P0 = ");
+    tft.println(p[0]);
+    tft.setCursor(cornerX+margin+gap,cornerY+2 * margin+height3+height1);
+    tft.print("P1 = ");
+    tft.println(p[1]);
+    tft.setCursor(cornerX+margin+gap,cornerY+2 * margin+height3+2 * height1);
+    tft.print("P2 = ");
+    tft.println(p[2]);
+    tft.setCursor(cornerX+margin+gap,cornerY+2 * margin+height3+3 * height1);
+    tft.print("t: ");
+    digitalClockDisplay(timeSetOnUnit);
+  }
 };
 
 time_t getTeensy3Time()
@@ -376,9 +404,6 @@ unsigned long processSyncMessage()
   return pctime;
 }
 
-uint16_t buttonHeight = 96; //480 / 5;
-uint16_t buttonWidth = 160; //320 / 2;
-uint8_t clearScreen = 0;
 nodes unit[] = 
 {
 nodes(0, 0x00E0, 0          , 0               , buttonWidth, buttonHeight, HX8357_BLUE),
@@ -395,20 +420,13 @@ nodes(9, 0x00E9, buttonWidth, 4 * buttonHeight, buttonWidth, buttonHeight, HX835
 
 void drawUnits()
 {
-  int margin = 10;
   tft.fillScreen(HX8357_BLACK);
   for (int i = 0; i<10;i++)
   {
-    tft.fillRoundRect(unit[i].cornerX+margin, unit[i].cornerY+margin,unit[i].deltaX-margin,unit[i].deltaY-margin,10,unit[i].color);
-    tft.setCursor(unit[i].cornerX+unit[i].deltaX/2-margin,unit[i].cornerY+unit[i].deltaY/2-margin);
-    tft.setTextColor(HX8357_BLACK);
-    tft.setTextSize(3);
-    tft.println(unit[i].name);
-    //tft.println(unit[i].cornerX+unit[i].deltaX/2-margin);
-    //tft.println(unit[i].cornerY+unit[i].deltaY/2-margin);
+    unit[i].drawButton();
   }
 }
-uint32_t oldmillis = millis();
+
 
 void setup()
 {
@@ -421,8 +439,6 @@ void setup()
   xbee.setSerial(Serial1);
   tft.begin();
   tft.fillScreen(HX8357_BLACK);
-  //while (!Serial)
-  //  ; // Wait for Arduino Serial Monitor to open
   delay(100);
   if (timeStatus() != timeSet)
   {
@@ -438,9 +454,14 @@ drawUnits();
 
 void loop()
 {
-  
-  //delay(1000);
-  //unit[2].updateTime();
+  if (Serial.available()) {
+    time_t t = processSyncMessage();
+    if (t != 0) {
+      Teensy3Clock.set(t); // set the RTC
+      setTime(t);
+    }
+    digitalClockDisplay(t); 
+  }
   
   if(millis() - oldmillis > 2000){
     oldmillis = millis();
@@ -450,15 +471,6 @@ void loop()
     p.y = map(p.y, TS_MINY, TS_MAXY, 0, tft.height());
     if (p.z > MINPRESSURE && p.z < MAXPRESSURE && p.x>0)
     {
-      // Scale from ~0->1000 to tft.width using the calibration #'s
-      
-      // Serial.println("--------------------");
-      // Serial.print(millis());
-      // Serial.print(" ,  X = ");
-      // Serial.print(p.x);
-      // Serial.print("\tY = ");
-      // Serial.println(p.y);
-    
       for(int i = 0; i <10 ; i++)
       {
         if(unit[i].cornerX<p.x && unit[i].cornerY<p.y && unit[i].cornerX+buttonWidth>p.x && unit[i].cornerY+buttonHeight>p.y)
@@ -475,9 +487,6 @@ void loop()
         }
       }
       drawUnits();
-    }
-    // we have some minimum pressure we consider 'valid'
-    // pressure of 0 means no pressing!
-    
+    } 
   }
 }
