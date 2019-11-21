@@ -11,11 +11,15 @@ TxStatusResponse txStatus;
 const int chipSelect = BUILTIN_SDCARD;
 bool sdSuccessSwitch = true;
 uint32_t recordingMillis = millis();
+uint32_t averagingMillis = millis();
+uint32_t previousHourMillis = millis();
 bool writeSwitch = false;
 bool sendPressureSwitch = false;
-int p1 = 0;
-int p2 = 0;
-int p3 = 0;
+uint32_t p0 = 0;
+uint32_t p1 = 0;
+uint32_t p2 = 0;
+int numReadings = 0;
+int previousHour = 0;
 
 void addToPayload(uint32_t value)
 {
@@ -43,36 +47,23 @@ void writeData()
   time_t t = Teensy3Clock.get();
   // make a string for assembling the data to log:
   String dataString = "";
-  // read three sensors and append to the string:
-  for (int analogPin = 0; analogPin < 3; analogPin++)
-  {
-    int sensor = analogRead(analogPin);
-    dataString += String(sensor);
-    if (analogPin < 2)
-    {
-      dataString += " , ";
-    }
-  }
-
-  dataString += " , ";
   dataString += String(t);
+  dataString += ".";
+  dataString += String(millis()%1000);
   dataString += " , ";
-  dataString += String(millis());
+  dataString += String(p0/numReadings);
+  dataString += " , ";
+  dataString += String(p1/numReadings);
+  dataString += " , ";
+  dataString += String(p2/numReadings);
 
-  // open the file. note that only one file can be open at a time,
-  // so you have to close this one before opening another.
-  Serial.println(filename);
   File dataFile = SD.open(filename, FILE_WRITE);
   // if the file is available, write to it:
   if (dataFile)
   {
     dataFile.println(dataString);
     dataFile.close();
-    // print to the serial port too:
-    Serial.println(dataString);
   }
-
-  // if the file isn't open, pop up an error:
   else
   {
     Serial.println("error opening datalog.txt");
@@ -97,28 +88,22 @@ void sendSetTimeAndPressure()
   sendData(t);
   for (int i = 0; i<10;i++)
   {
-    p1 += analogRead(A0);
+    p0 += analogRead(A0);
     delay(2);
-    p2 += analogRead(A1);
+    p1 += analogRead(A1);
     delay(2);
-    p3 += analogRead(A2);
+    p2 += analogRead(A2);
     delay(2);
   }
+  p0 /= 10;
   p1 /= 10;
   p2 /= 10;
-  p3 /= 10;
+  delay(250);
+  sendData(p0);
   delay(250);
   sendData(p1);
-  //Serial.print("p1 = ");
-  //Serial.println(p1);
-  delay(250);
-  sendData(p2);
-  //Serial.print("p2 = ");
-  //Serial.println(p2);
   delay(250);  
-  sendData(p3);
-  //Serial.print("p3 = ");
-  //Serial.println(p3);
+  sendData(p2);
 }
 
 void flushAPI()
@@ -131,13 +116,6 @@ void flushAPI()
     xbee.readPacket();
     //xbee.getResponse(discard);
   }
-}
-
-void updateFilename(uint32_t t)
-{
-  sprintf(filename, "%02d%02d%02d%02d.CSV", day(t), hour(t), minute(t), second(t));
-  Serial.print("filename = ");
-  Serial.println(filename);
 }
 
 void setup()
@@ -178,9 +156,10 @@ void loop()
       if(receivedTime>1000000)//then this must be the unix time
       {
         Teensy3Clock.set(receivedTime);
+        setTime(receivedTime);
         Serial.println(receivedTime);
-        updateFilename(receivedTime);
-        //sprintf(filename, "%lu", receivedTime);
+        previousHour = hour(receivedTime);
+        sprintf(filename, "%02d%02d%02d%02d.CSV", day(receivedTime), hour(receivedTime), minute(receivedTime), second(receivedTime));
         Serial.println(filename);
         writeSwitch = true;
         sendPressureSwitch = true;
@@ -192,14 +171,37 @@ void loop()
       }
     } 
   }
-  if (millis() - recordingMillis > 500 && writeSwitch)
+  if (millis() - recordingMillis > 100 && writeSwitch)
   {
     writeData();
     recordingMillis = millis();
+    Serial.println(numReadings);
+    numReadings = 0;
+    p0 = 0;
+    p1 = 0;
+    p2 = 0;
+  }
+  else if (writeSwitch && millis()-averagingMillis>5)
+  {
+    p0 += analogRead(A0);
+    p1 += analogRead(A1);
+    p2 += analogRead(A2);
+    numReadings++;
+    averagingMillis = millis();
   }
   if (sendPressureSwitch)
   {
     sendSetTimeAndPressure();
     sendPressureSwitch = false;
+  }
+  if (millis() - previousHourMillis > 50000)
+  {
+    previousHourMillis = millis();
+    time_t curt = Teensy3Clock.get();
+    if (hour(curt) != previousHour)
+    {
+      sprintf(filename, "%02d%02d%02d%02d.CSV", day(curt), hour(curt), minute(curt), second(curt));
+      previousHour = hour(curt);
+    }
   }
 }
