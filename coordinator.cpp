@@ -5,6 +5,8 @@
 #include "Adafruit_HX8357.h"
 #include "TouchScreen.h"
 #include <XBee.h>
+#include <TinyGPS++.h>
+#include <SD.h>
 
 /*  code to process time sync messages from the serial port   */
 #define TIME_HEADER "T" // Header tag for serial time sync message
@@ -34,6 +36,9 @@
 #define TFT_DC 2
 #define TFT_CS 7
 
+static const uint32_t GPSBaud = 9600;
+TinyGPSPlus gps;
+
 Adafruit_HX8357 tft = Adafruit_HX8357(TFT_CS, TFT_DC, TFT_RST);
 
 // For better pressure precision, we need to know the resistance
@@ -42,11 +47,108 @@ Adafruit_HX8357 tft = Adafruit_HX8357(TFT_CS, TFT_DC, TFT_RST);
 TouchScreen ts = TouchScreen(XP, YP, XM, YM, 321.1);
 
 XBee xbee = XBee();
+char filename[13] = "ddhhmmss.csv";
+const int chipSelect = BUILTIN_SDCARD;
 TxStatusResponse txStatus = TxStatusResponse();
 uint32_t oldmillis = millis();
 uint16_t buttonHeight = 96; //480 / 5;
 uint16_t buttonWidth = 160; //320 / 2;
 uint8_t clearScreen = 0;
+double latitude = 0;
+double longitude = 0;
+
+void writeData()
+{
+  time_t t = Teensy3Clock.get();
+  // make a string for assembling the data to log:
+  String dataString = "";
+  dataString += String(t);
+  dataString += ".";
+  dataString += String(millis()%1000);
+  dataString += " , ";
+  dataString += String(latitude,6);
+  dataString += " , ";
+  dataString += String(longitude,6);
+
+  File dataFile = SD.open(filename, FILE_WRITE);
+  // if the file is available, write to it:
+  if (dataFile)
+  {
+    dataFile.println(dataString);
+    dataFile.close();
+  }
+  else
+  {
+    tft.println("error opening log file!");//turn a red led on instead
+    delay(10000);
+  }
+}
+
+void logStringToFile(String text){
+  File dataFile = SD.open(filename, FILE_WRITE);
+  // if the file is available, write to it:
+  if (dataFile)
+  {
+    dataFile.println(text);
+    dataFile.close();
+  }
+}
+
+//displays the GPS data and sets the time
+void displayInfo()
+{
+  tft.print(F(" ")); 
+  if (gps.location.isValid())
+  {
+    tft.print(gps.location.lat(), 6);
+    latitude = gps.location.lat();
+    tft.print(F(","));
+    tft.print(gps.location.lng(), 6);
+    longitude = gps.location.lng();
+  }
+  else
+  {
+    tft.print(F("INVALID"));
+  }
+
+  tft.print(F(" "));
+  if (gps.date.isValid() && gps.time.isValid())
+  {
+    tft.print(gps.date.month());
+    tft.print(F("/"));
+    tft.print(gps.date.day());
+    tft.print(F("/"));
+    tft.print(gps.date.year());
+    // }
+    // else
+    // {
+    //   tft.print(F("INVALID"));
+    // }
+
+    // tft.print(F(" "));
+    // if (gps.time.isValid())
+    // {
+    if (gps.time.hour() < 10) tft.print(F("0"));
+    tft.print(gps.time.hour());
+    tft.print(F(":"));
+    if (gps.time.minute() < 10) tft.print(F("0"));
+    tft.print(gps.time.minute());
+    tft.print(F(":"));
+    if (gps.time.second() < 10) tft.print(F("0"));
+    tft.print(gps.time.second());
+    tft.print(F("."));
+    if (gps.time.centisecond() < 10) tft.print(F("0"));
+    tft.print(gps.time.centisecond());
+    setTime(gps.time.hour(), gps.time.minute(), gps.time.second(), gps.date.day(), gps.date.month(), gps.date.year());
+    Teensy3Clock.set(now());
+  }
+  else
+  {
+    tft.print(F("INVALID"));
+  }
+
+  tft.println();
+}
 
 void printDigits(uint32_t digits)
 {
@@ -63,11 +165,11 @@ void digitalClockDisplay(uint32_t tt)
   tft.print(hour(tt));
   printDigits(minute(tt));
   printDigits(second(tt));
-  tft.print(" ");
+  tft.print("  ");
   tft.print(day(tt));
-  tft.print(" ");
+  tft.print("/");
   tft.print(month(tt));
-  tft.print(" ");
+  tft.print("/");
   tft.print(year(tt));
   tft.println();
   tft.println();
@@ -99,6 +201,10 @@ class nodes
           deltaX = deltaXWidth;
           deltaY = deltaYHeight;
           color = buttonColor;
+          timeSetOnUnit = 0;
+          p[0] = 0;
+          p[1] = 0;
+          p[2] = 0;
   }
   
   void addToPayload(uint32_t value){//adds a 32 bit value to the payload to be sent to the unit
@@ -134,6 +240,7 @@ class nodes
           if(receivedTime>10000000)//then this must be the unix time
           {
             uint32_t deltaT = Teensy3Clock.get() - receivedTime;
+            tft.println();
             tft.print("deltaT between unit and coordinator = ");
             tft.println(deltaT);
             if (deltaT == 0)
@@ -201,6 +308,7 @@ class nodes
               if (checkTimeOnUnit())//check to see if the time set on the unit is almost the same as the time on the coordinator
               {
                 updateTimeSuccess = true;
+                tft.println();
                 tft.println("Successfully updated the time on this unit");
                 tft.print("updateTimeSuccess = ");
                 tft.println(deltaT);
@@ -212,6 +320,7 @@ class nodes
               }
               else
               {
+                tft.println();
                 tft.println("got the acknowledgement in time but the time is not set on the remote unit!");
                 tft.print("number of retries: ");
                 tft.println(numTries);
@@ -233,9 +342,9 @@ class nodes
           }
           else
           {
+            tft.println();
             tft.println("the remote unit did not receive our packet. is it powered on?");
             tft.println("If it is turned on, Try moving closer to the unit");
-            tft.println();
             delay(5000);
             color = HX8357_RED;
             flushAPI();
@@ -369,39 +478,35 @@ class nodes
     tft.setCursor(cornerX+margin+gap,cornerY+2* margin+height3);
     tft.setTextSize(1);
     tft.print("P0 = ");
-    tft.println(p[0]);
+    tft.print(convertToPressure(p[0]),2);
+    tft.print(" psi");
     tft.setCursor(cornerX+margin+gap,cornerY+2 * margin+height3+height1);
     tft.print("P1 = ");
-    tft.println(p[1]);
+    tft.print(convertToPressure(p[1]),2);
+    tft.print(" psi");
     tft.setCursor(cornerX+margin+gap,cornerY+2 * margin+height3+2 * height1);
     tft.print("P2 = ");
-    tft.println(p[2]);
-    tft.setCursor(cornerX+margin+gap,cornerY+2 * margin+height3+3 * height1);
-    tft.print("t: ");
+    tft.print(convertToPressure(p[2]),2);
+    tft.print(" psi");
+    tft.setCursor(cornerX+margin+gap,cornerY+2 * margin+height3+4 * height1);
+    tft.print(" ");
     digitalClockDisplay(timeSetOnUnit);
+  }
+
+  float convertToPressure(uint32_t rawVal)
+  {
+    float pressure;
+    pressure = (float)rawVal - 406.0;
+    pressure *= 0.092336;
+    if (pressure < -5)
+      pressure = 0.0;
+    return pressure;
   }
 };
 
 time_t getTeensy3Time()
 {
   return Teensy3Clock.get();
-}
-
-unsigned long processSyncMessage()
-{
-  unsigned long pctime = 0L;
-  const unsigned long DEFAULT_TIME = 1357041600; // Jan 1 2013
-
-  if (Serial.find(TIME_HEADER))
-  {
-    pctime = Serial.parseInt();
-    return pctime;
-    if (pctime < DEFAULT_TIME)
-    {              // check the value is a valid time (greater than Jan 1 2013)
-      pctime = 0L; // return 0 to indicate that the time is not valid
-    }
-  }
-  return pctime;
 }
 
 nodes unit[] = 
@@ -435,33 +540,66 @@ void setup()
   setSyncProvider(getTeensy3Time);
   //Serial.begin(115200);
   Serial1.begin(115200);
-
+  Serial2.begin(GPSBaud);
+  SD.begin(chipSelect);
   xbee.setSerial(Serial1);
   tft.begin();
   tft.fillScreen(HX8357_BLACK);
-  delay(100);
+  uint32_t waitMillis = millis();
+  int numLines = 55;
+  //maximum wait for one minute to get the GPS fix
+  while((!gps.location.isValid() || !gps.time.isValid() || !gps.date.isValid()) && millis()-waitMillis < 60000)
+  {
+    while (Serial2.available() > 0)
+    if (gps.encode(Serial2.read()))
+    {
+      tft.print(millis()/1000);
+      tft.print(" ");
+      displayInfo();//displays on the tft screen and sets the time and rtc on the coordinator
+      numLines--;
+      if(numLines == 0)
+      {
+        numLines = 55;
+        tft.fillScreen(HX8357_BLACK);
+        tft.setCursor(0,0);
+      }
+    }  
+    if (millis() > 5000 && gps.charsProcessed() < 10)
+    {
+      tft.println(F("No GPS detected: check wiring."));
+      delay(1000);
+    }
+  }
+
+  time_t curt = Teensy3Clock.get();
+  sprintf(filename, "%02d%02d%02d%02d.CSV", day(curt), hour(curt), minute(curt), second(curt));
+  writeData();
+  delay(5000); //show the location data for 5 seconds
+  
   if (timeStatus() != timeSet)
   {
     tft.println("Unable to sync with the RTC");
+    delay(1000);
   }
   else
   {
     tft.println("RTC has set the system time");
+    delay(1000);
   }
 
-drawUnits();
+  drawUnits();
 }
 
 void loop()
 {
-  if (Serial.available()) {
-    time_t t = processSyncMessage();
-    if (t != 0) {
-      Teensy3Clock.set(t); // set the RTC
-      setTime(t);
-    }
-    digitalClockDisplay(t); 
-  }
+  // if (Serial.available()) {
+  //   time_t t = processSyncMessage();
+  //   if (t != 0) {
+  //     Teensy3Clock.set(t); // set the RTC
+  //     setTime(t);
+  //   }
+  //   digitalClockDisplay(t); 
+  // }
   
   if(millis() - oldmillis > 2000){
     oldmillis = millis();
