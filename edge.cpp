@@ -66,7 +66,8 @@ void writeData()
   }
   else
   {
-    Serial.println("error opening datalog.txt");
+    Serial.print("error opening the log file: ");//turn a red led on instead
+    Serial.println(filename);
     delay(10000);
   }
 }
@@ -86,6 +87,9 @@ void sendSetTimeAndPressure()
 {
   time_t t = Teensy3Clock.get();
   sendData(t);
+  p0 = 0;
+  p1 = 0;
+  p2 = 0;
   for (int i = 0; i<10;i++)
   {
     p0 += analogRead(A0);
@@ -104,6 +108,9 @@ void sendSetTimeAndPressure()
   sendData(p1);
   delay(250);  
   sendData(p2);
+  p0 = 0;
+  p1 = 0;
+  p2 = 0;
 }
 
 void flushAPI()
@@ -175,13 +182,13 @@ void loop()
   {
     writeData();
     recordingMillis = millis();
-    Serial.println(numReadings);
-    numReadings = 0;
-    p0 = 0;
-    p1 = 0;
-    p2 = 0;
+    //Serial.println(numReadings);
+    numReadings = 0;//initialize after writing to file
+    p0 = 0;//initialize after writing to file
+    p1 = 0;//initialize after writing to file
+    p2 = 0;//initialize after writing to file
   }
-  else if (writeSwitch && millis()-averagingMillis>5)
+  else if (writeSwitch && millis()-averagingMillis>5)//averaging the readings
   {
     p0 += analogRead(A0);
     p1 += analogRead(A1);
@@ -189,12 +196,12 @@ void loop()
     numReadings++;
     averagingMillis = millis();
   }
-  if (sendPressureSwitch)
+  if (sendPressureSwitch)//everytime time is received, send the set time and pressures
   {
     sendSetTimeAndPressure();
     sendPressureSwitch = false;
   }
-  if (millis() - previousHourMillis > 50000)
+  if (millis() - previousHourMillis > 3600000)//change the name of the file every one hour
   {
     previousHourMillis = millis();
     time_t curt = Teensy3Clock.get();
