@@ -56,6 +56,8 @@ uint16_t buttonWidth = 160; //320 / 2;
 uint8_t clearScreen = 0;
 double latitude = 0;
 double longitude = 0;
+time_t initialTime = 0;
+static int numUnits = 8;
 
 void writeData()
 {
@@ -66,9 +68,9 @@ void writeData()
   dataString += ".";
   dataString += String(millis()%1000);
   dataString += " , ";
-  dataString += String(latitude,6);
+  dataString += String(latitude,8);
   dataString += " , ";
-  dataString += String(longitude,6);
+  dataString += String(longitude,8);
 
   File dataFile = SD.open(filename, FILE_WRITE);
   // if the file is available, write to it:
@@ -84,7 +86,7 @@ void writeData()
   }
 }
 
-void logStringToFile(String text){
+void logStringToFile(String &text){
   File dataFile = SD.open(filename, FILE_WRITE);
   // if the file is available, write to it:
   if (dataFile)
@@ -125,7 +127,7 @@ void displayInfo()
     //   tft.print(F("INVALID"));
     // }
 
-    // tft.print(F(" "));
+    tft.print(F("  "));
     // if (gps.time.isValid())
     // {
     if (gps.time.hour() < 10) tft.print(F("0"));
@@ -155,7 +157,7 @@ void printDigits(uint32_t digits)
   // utility function for digital clock display: prints preceding colon and leading 0
   tft.print(":");
   if (digits < 10)
-    Serial.print('0');
+    tft.print('0');
   tft.print(digits);
 }
 
@@ -190,6 +192,7 @@ class nodes
   uint16_t color;
   uint32_t p[3] = {0,0,0};
   uint32_t timeSetOnUnit = 0;
+  uint16_t filenameTime = 0;
     
   nodes();
 
@@ -202,6 +205,7 @@ class nodes
           deltaY = deltaYHeight;
           color = buttonColor;
           timeSetOnUnit = 0;
+          filenameTime = 0;
           p[0] = 0;
           p[1] = 0;
           p[2] = 0;
@@ -227,7 +231,7 @@ class nodes
 
   bool checkTimeOnUnit(){//will check if the time set on this unit is within accepted delta of the coordinator
     bool timeSetCorrectly = false;
-    for (int i = 0; i<4; i++)//time,p[0],p[1],p[2]
+    for (int i = 0; i<5; i++)//time,p[0],p[1],p[2],sdSuccess
     {  
       if (xbee.readPacket(1000))
       {
@@ -249,9 +253,25 @@ class nodes
             }
             timeSetOnUnit = receivedTime;
           }
-          else //must be pressure data
+          else if(i<4) //must be pressure data
           {
             p[i-1] = receivedTime;
+          }
+          else if(i==4)//reports the sdSuccessStatus
+          {
+            if(receivedTime == 0)
+            {
+              color = HX8357_RED;
+              timeSetCorrectly = false;
+              tft.println();
+              tft.println("sd card initialization failed! sdSuccessStatus is false!");
+              tft.println();
+            }
+            else
+            {
+              filenameTime = receivedTime;
+            }
+            
           }
         } 
       }
@@ -266,9 +286,8 @@ class nodes
     xbee.readPacket();
     while(xbee.getResponse().isAvailable())
     {
-      Serial.println(xbee.getResponse().getApiId());
+      //Serial.println(xbee.getResponse().getApiId());
       xbee.readPacket();
-      //xbee.getResponse(discard);
     }
   }
 
@@ -416,6 +435,7 @@ class nodes
               if (checkRecordingStatusOnUnit())//check to see if the time set on the unit is almost the same as the time on the coordinator
               {
                 stopMessageSuccess = true;
+                tft.println();
                 tft.println("Successfully stopped recording on this unit");
                 tft.print("round message duration = ");
                 tft.println(deltaT);
@@ -498,8 +518,8 @@ class nodes
     float pressure;
     pressure = (float)rawVal - 406.0;
     pressure *= 0.092336;
-    if (pressure < -5)
-      pressure = 0.0;
+    if (pressure < -10)
+      pressure = -1000.0;
     return pressure;
   }
 };
@@ -519,17 +539,24 @@ nodes(4, 0x00E4, 0          , 2 * buttonHeight, buttonWidth, buttonHeight, HX835
 nodes(5, 0x00E5, buttonWidth, 2 * buttonHeight, buttonWidth, buttonHeight, HX8357_BLUE),
 nodes(6, 0x00E6, 0          , 3 * buttonHeight, buttonWidth, buttonHeight, HX8357_BLUE),
 nodes(7, 0x00E7, buttonWidth, 3 * buttonHeight, buttonWidth, buttonHeight, HX8357_BLUE),
-nodes(8, 0x00E8, 0          , 4 * buttonHeight, buttonWidth, buttonHeight, HX8357_BLUE),
-nodes(9, 0x00E9, buttonWidth, 4 * buttonHeight, buttonWidth, buttonHeight, HX8357_BLUE)
+//nodes(8, 0x00E8, 0          , 4 * buttonHeight, buttonWidth, buttonHeight, HX8357_BLUE),
+//nodes(9, 0x00E9, buttonWidth, 4 * buttonHeight, buttonWidth, buttonHeight, HX8357_BLUE)
 };
 
 void drawUnits()
 {
   tft.fillScreen(HX8357_BLACK);
-  for (int i = 0; i<10;i++)
+  for (int i = 0; i<numUnits;i++)
   {
     unit[i].drawButton();
   }
+  tft.setTextColor(HX8357_GREEN);
+  tft.setCursor(20, 420);
+  tft.print("Latitude = ");
+  tft.print(latitude,8);
+  tft.setCursor(20, 440);
+  tft.print("Longitude = ");
+  tft.print(longitude,8);
 }
 
 
@@ -538,6 +565,7 @@ void setup()
   
   // set the Time library to use Teensy 3.0's RTC to keep time
   setSyncProvider(getTeensy3Time);
+  setSyncInterval(10);
   //Serial.begin(115200);
   Serial1.begin(115200);
   Serial2.begin(GPSBaud);
@@ -592,15 +620,15 @@ void setup()
 
 void loop()
 {
-  // if (Serial.available()) {
-  //   time_t t = processSyncMessage();
-  //   if (t != 0) {
-  //     Teensy3Clock.set(t); // set the RTC
-  //     setTime(t);
-  //   }
-  //   digitalClockDisplay(t); 
-  // }
-  
+  time_t curTime = Teensy3Clock.get(); //current time
+  if (curTime != initialTime){
+    tft.setCursor(20,400);
+    tft.fillRect(20,400,120,10,HX8357_BLACK);
+    tft.setTextColor(HX8357_GREEN);
+    digitalClockDisplay(curTime);
+    initialTime = curTime;
+  }
+
   if(millis() - oldmillis > 2000){
     oldmillis = millis();
     // Retrieve a point
@@ -609,17 +637,50 @@ void loop()
     p.y = map(p.y, TS_MINY, TS_MAXY, 0, tft.height());
     if (p.z > MINPRESSURE && p.z < MAXPRESSURE && p.x>0)
     {
-      for(int i = 0; i <10 ; i++)
+      for(int i = 0; i < numUnits ; i++)
       {
         if(unit[i].cornerX<p.x && unit[i].cornerY<p.y && unit[i].cornerX+buttonWidth>p.x && unit[i].cornerY+buttonHeight>p.y)
         {
           if(unit[i].color != HX8357_GREEN) // it is either not initialized or we didn't get the response that it is recording
-          {  
-            unit[i].updateTime();
+          { 
+            String dataString = "At time ";
+            dataString += String(getTeensy3Time());
+            dataString += ".";
+            dataString += String(millis()%1000);
+            dataString += " , time on unit ";
+            dataString += String(i);
+            dataString += "  is asked to be updated. ";
+            uint8_t updateUnsuccessful = unit[i].updateTime();
+            if (updateUnsuccessful == 0){
+              dataString += " , update was successful. Pressures (0,1,2): ";
+              dataString += String(unit[i].p[0]);
+              dataString += " , ";
+              dataString += String(unit[i].p[1]);
+              dataString += " , ";
+              dataString += String(unit[i].p[2]);
+            }
+            else{
+              dataString += " , update was unsuccessful. ";
+            }
+            logStringToFile(dataString);
           }
           else //it is recording (it is green)
           {
-            unit[i].stopRecording();
+            String dataString = "At time ";
+            dataString += String(getTeensy3Time());
+            dataString += ".";
+            dataString += String(millis()%1000);
+            dataString += " , recording on unit ";
+            dataString += String(i);
+            dataString += "  is asked to be stopped. ";
+            uint8_t stopUnsuccessful = unit[i].stopRecording();
+            if (stopUnsuccessful == 0){
+              dataString += " , stop command was successful. ";
+            }
+            else{
+              dataString += " , stop command was unsuccessful. ";
+            }
+            logStringToFile(dataString);
           }
           delay(500);
         }
