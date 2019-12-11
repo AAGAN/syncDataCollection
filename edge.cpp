@@ -20,6 +20,28 @@ uint32_t p1 = 0;
 uint32_t p2 = 0;
 int numReadings = 0;
 int previousHour = 0;
+bool debug = false;
+
+float convertToPressure(uint32_t rawVal)
+{
+  float pressure;
+  pressure = (float)rawVal - 406.0;
+  pressure *= 0.092336;
+  if (pressure < -5)
+    pressure = 0.0;
+  return pressure;
+}
+
+void serialPrintPressure()
+{
+  if(debug){
+    Serial.print(convertToPressure(p0 / numReadings));
+    Serial.print(" , ");
+    Serial.print(convertToPressure(p1 / numReadings));
+    Serial.print(" , ");
+    Serial.println(convertToPressure(p2 / numReadings));
+  }
+}
 
 void addToPayload(uint32_t value)
 {
@@ -63,11 +85,16 @@ void writeData()
   {
     dataFile.println(dataString);
     dataFile.close();
+    if (debug){
+      serialPrintPressure();
+    }
   }
   else
   {
-    Serial.print("error opening the log file: ");//turn a red led on instead
-    Serial.println(filename);
+    if(debug){
+      Serial.print("error opening the log file: ");//turn a red led on instead
+      Serial.println(filename);
+    }
     delay(10000);
   }
 }
@@ -90,7 +117,7 @@ void sendSetTimeAndPressure()
   p0 = 0;
   p1 = 0;
   p2 = 0;
-  for (int i = 0; i<10;i++)
+  for (int i = 0; i<20;i++)
   {
     p0 += analogRead(A0);
     delay(2);
@@ -99,15 +126,25 @@ void sendSetTimeAndPressure()
     p2 += analogRead(A2);
     delay(2);
   }
-  p0 /= 10;
-  p1 /= 10;
-  p2 /= 10;
+  p0 /= 20;
+  p1 /= 20;
+  p2 /= 20;
   delay(250);
   sendData(p0);
   delay(250);
   sendData(p1);
   delay(250);  
   sendData(p2);
+  delay(250);
+  if (sdSuccessSwitch)
+  {
+    sendData(1);
+  }
+  else
+  {
+    sendData(0);
+  }
+  
   p0 = 0;
   p1 = 0;
   p2 = 0;
@@ -119,7 +156,9 @@ void flushAPI()
   xbee.readPacket();
   while(xbee.getResponse().isAvailable())
   {
-    Serial.println(xbee.getResponse().getApiId());
+    if(debug){
+      Serial.println(xbee.getResponse().getApiId());
+    }
     xbee.readPacket();
     //xbee.getResponse(discard);
   }
@@ -128,23 +167,39 @@ void flushAPI()
 void setup()
 {
   // set the Time library to use Teensy 3.0's RTC to keep time
+  // while(!Serial)
+  //   ;
   setSyncProvider(getTeensy3Time);
-  Serial.begin(115200);
+  setSyncInterval(10);
+  if(debug){
+    Serial.begin(115200);
+  }
   Serial1.begin(115200);
   analogReadResolution(12);
   pinMode(A0, INPUT);
   pinMode(A1, INPUT);
   pinMode(A2, INPUT);
   xbee.setSerial(Serial1);
-  delay(100);
-  Serial.print("Initializing SD card...");
+  delay(15000);
+  if(debug){
+    Serial.print("Initializing SD card...");
+  }
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect))
   {
     sdSuccessSwitch = false;
-    return;
+    if(debug){
+      Serial.println("card initialization failed.");
+    }
   }
-  Serial.println("card initialized.");
+  else
+  {
+    sdSuccessSwitch = true;
+    if(debug){
+    Serial.println("card initialized.");
+    }
+  }
+  
   flushAPI();
 }
 
@@ -160,14 +215,21 @@ void loop()
       xbee.getResponse().getRx16Response(resp);
       uint8_t frameData[] = {resp.getData(0),resp.getData(1),resp.getData(2),resp.getData(3)};
       uint32_t receivedTime = decodePayload(frameData);
+      if(debug){
+        Serial.print(receivedTime);
+      }
       if(receivedTime>1000000)//then this must be the unix time
       {
         Teensy3Clock.set(receivedTime);
         setTime(receivedTime);
-        Serial.println(receivedTime);
+        if(debug){
+          Serial.println(receivedTime);
+        } 
         previousHour = hour(receivedTime);
         sprintf(filename, "%02d%02d%02d%02d.CSV", day(receivedTime), hour(receivedTime), minute(receivedTime), second(receivedTime));
-        Serial.println(filename);
+        if(debug){
+          Serial.println(filename);
+        }
         writeSwitch = true;
         sendPressureSwitch = true;
         flushAPI();
@@ -201,14 +263,14 @@ void loop()
     sendSetTimeAndPressure();
     sendPressureSwitch = false;
   }
-  if (millis() - previousHourMillis > 3600000)//change the name of the file every one hour
-  {
-    previousHourMillis = millis();
-    time_t curt = Teensy3Clock.get();
-    if (hour(curt) != previousHour)
-    {
-      sprintf(filename, "%02d%02d%02d%02d.CSV", day(curt), hour(curt), minute(curt), second(curt));
-      previousHour = hour(curt);
-    }
-  }
+  // if (millis() - previousHourMillis > 3600000)//change the name of the file every one hour
+  // {
+  //   previousHourMillis = millis();
+  //   time_t curt = Teensy3Clock.get();
+  //   if (hour(curt) != previousHour)
+  //   {
+  //     sprintf(filename, "%02d%02d%02d%02d.CSV", day(curt), hour(curt), minute(curt), second(curt));
+  //     previousHour = hour(curt);
+  //   }
+  // }
 }
