@@ -120,7 +120,7 @@ void sendSetTimeAndPressure()
   for (int i = 0; i<20;i++)
   {
     p0 += analogRead(A0);
-    delay(2);
+    delay(2);// 1 may be better?
     p1 += analogRead(A1);
     delay(2);
     p2 += analogRead(A2);
@@ -129,7 +129,7 @@ void sendSetTimeAndPressure()
   p0 /= 20;
   p1 /= 20;
   p2 /= 20;
-  delay(250);
+  delay(250);//150 may be better?
   sendData(p0);
   delay(250);
   sendData(p1);
@@ -148,6 +148,8 @@ void sendSetTimeAndPressure()
   p0 = 0;
   p1 = 0;
   p2 = 0;
+ //delay(150);
+ //flushAPI();//to clear the acknowledgements?
 }
 
 void flushAPI()
@@ -175,6 +177,7 @@ void setup()
     Serial.begin(115200);
   }
   Serial1.begin(115200);
+  //delay(5);
   analogReadResolution(12);
   pinMode(A0, INPUT);
   pinMode(A1, INPUT);
@@ -237,6 +240,7 @@ void loop()
       else if (receivedTime == 0)
       {
         writeSwitch = false;
+        //flushAPI();
       }
     } 
   }
