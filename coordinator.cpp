@@ -9,7 +9,7 @@
 #include <SD.h>
 
 /*  code to process time sync messages from the serial port   */
-#define TIME_HEADER "T" // Header tag for serial time sync message
+//#define TIME_HEADER "T" // Header tag for serial time sync message
 
 // These are the four touchscreen analog pins
 #define YP A9 // must be an analog pin, use "An" notation!
@@ -26,10 +26,10 @@
 #define MINPRESSURE 10
 #define MAXPRESSURE 1000
 
-#define Coordinator 0x0013a2004193f64b
-#define EndDevice1 0x0013a2004192cdf3
-#define EndDevice2 0x0013a2004195ce13
-#define EndDevice3 0x0013a2004192dc03
+//#define Coordinator 0x0013a2004193f64b
+//#define EndDevice1 0x0013a2004192cdf3
+//#define EndDevice2 0x0013a2004195ce13
+//#define EndDevice3 0x0013a2004192dc03
 
 // The display uses hardware SPI, plus #9 & #10
 #define TFT_RST -1 // dont use a reset pin, tie to arduino RST if you like
@@ -44,7 +44,7 @@ Adafruit_HX8357 tft = Adafruit_HX8357(TFT_CS, TFT_DC, TFT_RST);
 // For better pressure precision, we need to know the resistance
 // between X+ and X- Use any multimeter to read it
 // For the one we're using, its 300 ohms across the X plate
-TouchScreen ts = TouchScreen(XP, YP, XM, YM, 321.1);
+TouchScreen ts = TouchScreen(XP, YP, XM, YM, 321.1); //check this for new displays
 
 XBee xbee = XBee();
 char filename[13] = "ddhhmmss.csv";
@@ -641,7 +641,7 @@ void loop()
       {
         if(unit[i].cornerX<p.x && unit[i].cornerY<p.y && unit[i].cornerX+buttonWidth>p.x && unit[i].cornerY+buttonHeight>p.y)
         {
-          if(unit[i].color != HX8357_GREEN) // it is either not initialized or we didn't get the response that it is recording
+          if(unit[i].color != HX8357_GREEN) // it is not recording - it is either not initialized or we didn't get the response that it is recording
           { 
             String dataString = "At time ";
             dataString += String(getTeensy3Time());
@@ -650,7 +650,7 @@ void loop()
             dataString += " , time on unit ";
             dataString += String(i);
             dataString += "  is asked to be updated. ";
-            uint8_t updateUnsuccessful = unit[i].updateTime();
+            uint8_t updateUnsuccessful = unit[i].updateTime(); //int is better due to the definition of the function 
             if (updateUnsuccessful == 0){
               dataString += " , update was successful. Pressures (0,1,2): ";
               dataString += String(unit[i].p[0]);
@@ -673,7 +673,7 @@ void loop()
             dataString += " , recording on unit ";
             dataString += String(i);
             dataString += "  is asked to be stopped. ";
-            uint8_t stopUnsuccessful = unit[i].stopRecording();
+            uint8_t stopUnsuccessful = unit[i].stopRecording();// int is better
             if (stopUnsuccessful == 0){
               dataString += " , stop command was successful. ";
             }
