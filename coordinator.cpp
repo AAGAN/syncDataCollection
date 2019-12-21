@@ -8,9 +8,6 @@
 #include <TinyGPS++.h>
 #include <SD.h>
 
-/*  code to process time sync messages from the serial port   */
-//#define TIME_HEADER "T" // Header tag for serial time sync message
-
 // These are the four touchscreen analog pins
 #define YP A9 // must be an analog pin, use "An" notation!
 #define XM A8 // must be an analog pin, use "An" notation!
@@ -25,11 +22,6 @@
 
 #define MINPRESSURE 10
 #define MAXPRESSURE 1000
-
-//#define Coordinator 0x0013a2004193f64b
-//#define EndDevice1 0x0013a2004192cdf3
-//#define EndDevice2 0x0013a2004195ce13
-//#define EndDevice3 0x0013a2004192dc03
 
 // The display uses hardware SPI, plus #9 & #10
 #define TFT_RST -1 // dont use a reset pin, tie to arduino RST if you like
@@ -259,19 +251,19 @@ class nodes
           }
           else if(i==4)//reports the sdSuccessStatus
           {
-            if(receivedTime == 0)
+            if(receivedTime != 1)// 0 or other values
             {
               color = HX8357_RED;
               timeSetCorrectly = false;
               tft.println();
               tft.println("sd card initialization failed! sdSuccessStatus is false!");
               tft.println();
+              delay(2000);
             }
-            else
+            else if (receivedTime == 1)
             {
               filenameTime = receivedTime;
             }
-            
           }
         } 
       }
@@ -291,7 +283,7 @@ class nodes
     }
   }
 
-  int updateTime(){//updates the time on this unit and returns 0 if successful and 1 if not successful
+  uint8_t updateTime(){//updates the time on this unit and returns 0 if successful and 1 if not successful
     bool updateTimeSuccess = false;
     uint8_t numTries = 0;
     tft.fillScreen(HX8357_BLACK);
@@ -329,10 +321,10 @@ class nodes
                 updateTimeSuccess = true;
                 tft.println();
                 tft.println("Successfully updated the time on this unit");
-                tft.print("updateTimeSuccess = ");
+                tft.print("deltaT = ");
                 tft.println(deltaT);
                 tft.print("time is updated to : ");
-                tft.println(ttime);
+                tft.println(timeSetOnUnit);
                 digitalClockDisplay(ttime);
                 color = HX8357_GREEN;
                 delay(10000);
@@ -345,6 +337,7 @@ class nodes
                 tft.println(numTries);
                 delay(5000);
                 color = HX8357_RED;
+                flushAPI();
               }
             }
             else
@@ -354,9 +347,9 @@ class nodes
               tft.println("Attemped to update the time but the response time was too long. will retry. get closer to the unit.");
               tft.print("number of attempts: ");
               tft.println(numTries);
-              delay(10000);
+              delay(5000);
               color = HX8357_RED;
-              flushAPI();
+              flushAPI(); //the edge device doesn't know about the timing issue and will send the time and pressure data
             }
           }
           else
@@ -401,7 +394,7 @@ class nodes
     return true;
   }
 
-  int stopRecording()
+  uint8_t stopRecording()
   {//sends a signal to the unit to stop recording
     bool stopMessageSuccess = false;
     uint8_t numTries = 0;
@@ -641,7 +634,7 @@ void loop()
       {
         if(unit[i].cornerX<p.x && unit[i].cornerY<p.y && unit[i].cornerX+buttonWidth>p.x && unit[i].cornerY+buttonHeight>p.y)
         {
-          if(unit[i].color != HX8357_GREEN) // it is not recording - it is either not initialized or we didn't get the response that it is recording
+          if(unit[i].color != HX8357_GREEN) // It is not recording - it is either not initialized or we didn't get the response that it is recording
           { 
             String dataString = "At time ";
             dataString += String(getTeensy3Time());
@@ -650,7 +643,7 @@ void loop()
             dataString += " , time on unit ";
             dataString += String(i);
             dataString += "  is asked to be updated. ";
-            uint8_t updateUnsuccessful = unit[i].updateTime(); //int is better due to the definition of the function 
+            uint8_t updateUnsuccessful = unit[i].updateTime();
             if (updateUnsuccessful == 0){
               dataString += " , update was successful. Pressures (0,1,2): ";
               dataString += String(unit[i].p[0]);
@@ -673,7 +666,7 @@ void loop()
             dataString += " , recording on unit ";
             dataString += String(i);
             dataString += "  is asked to be stopped. ";
-            uint8_t stopUnsuccessful = unit[i].stopRecording();// int is better
+            uint8_t stopUnsuccessful = unit[i].stopRecording();
             if (stopUnsuccessful == 0){
               dataString += " , stop command was successful. ";
             }
